@@ -114,7 +114,7 @@ if __name__ == '__main__':
     
     best_model = tuner.get_best_models()[0]
     
-    score = model.evaluate(x_val, y_val, verbose=0)
+    score = best_model.evaluate(x_val, y_val, verbose=0)
     print('Validation loss    :', score[0])
     print('Validation accuracy:', score[1])
     
@@ -123,6 +123,6 @@ if __name__ == '__main__':
     tf.saved_model.simple_save(
         sess,
         os.path.join(model_dir, 'model/1'),
-        inputs={'inputs': model.input},
-        outputs={t.name: t for t in model.outputs})
+        inputs={'inputs': best_model.input},
+        outputs={t.name: t for t in best_model.outputs})
     mlflow.end_run()
