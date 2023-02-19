@@ -2,16 +2,15 @@ import argparse, os
 import numpy as np
 
 import tensorflow as tf
-import keras
-from keras import backend as K
-from keras.models import Sequential
-from keras.layers import Dense, Dropout, Activation, Flatten, BatchNormalization, Conv2D, MaxPooling2D
-from keras.optimizers import SGD
-from keras.callbacks import Callback, EarlyStopping
-from keras.preprocessing.image import ImageDataGenerator
-from keras.utils import multi_gpu_model
+from tensorflow import keras
+from tensorflow.keras import backend as K
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.utils import multi_gpu_model
+from model import create_model
 from sagemaker.experiments import Run
 import logger
+import mlflow 
+import keras_tuner
 
 if __name__ == '__main__':
         
@@ -48,7 +47,8 @@ if __name__ == '__main__':
     
     # input image dimensions
     img_rows, img_cols = 28, 28
-
+    mlflow.start_run()
+    mlflow.tensorflow.auto_log()
     # Tensorflow needs image channels last, e.g. (batch size, width, height, channels)
     K.set_image_data_format('channels_last')  
     print(K.image_data_format())
@@ -80,37 +80,16 @@ if __name__ == '__main__':
     y_train = keras.utils.to_categorical(y_train, num_classes)
     y_val   = keras.utils.to_categorical(y_val, num_classes)
     
-    model = Sequential()
-    
-    # 1st convolution block
-    model.add(Conv2D(8, kernel_size=(3,3), padding='same', input_shape=input_shape))
-    model.add(BatchNormalization(axis=batch_norm_axis))
-    model.add(Activation('relu'))
-    model.add(MaxPooling2D(pool_size=(2,2), strides=2))
-    
-    # 2nd convolution block
-    model.add(Conv2D(18, kernel_size=(3,3), padding='valid'))
-    model.add(BatchNormalization(axis=batch_norm_axis))
-    model.add(Activation('relu'))
-    model.add(MaxPooling2D(pool_size=(2,2), strides=2))
+    tuner = keras_tuner.BayesianOptimization(
+                                    create_model,
+                                    objective='val_loss',
+                                    max_trials=6)
+   
 
-    # Fully connected block
-    model.add(Flatten())
-    model.add(Dense(dense_layer))
-    model.add(Activation('relu'))
-    model.add(Dropout(dropout))
-
-    # Output layer
-    model.add(Dense(num_classes, activation='softmax'))
-    
-    print(model.summary())
-
-    if gpu_count > 1:
-        model = multi_gpu_model(model, gpus=gpu_count)
+    # if gpu_count > 1:
+    #     model = multi_gpu_model(model, gpus=gpu_count)
                     
-    model.compile(loss=keras.losses.categorical_crossentropy,
-                  optimizer=SGD(lr=lr, decay=1e-6, momentum=0.9, nesterov=True),
-                  metrics=['accuracy'])
+ 
     
     #datagen = ImageDataGenerator(
     # rotation_range=20,
@@ -124,11 +103,16 @@ if __name__ == '__main__':
     #                epochs=epochs,
     #                steps_per_epoch=len(x_train) / batch_size,
     #               verbose=1)
-                    
-    model.fit(x_train, y_train, batch_size=batch_size,
-                    validation_data=(x_val, y_val), 
-                    epochs=epochs,
-                    verbose=1)
+    callbacks=[tf.keras.callbacks.TensorBoard(log_dir="./logs"),
+               tf.keras.callbacks.EarlyStopping(monitor='loss', patience=3)]
+               
+
+    tuner.search(x_train, y_train, 
+                 epochs=epochs, 
+                 validation_data=(x_val, y_val),
+                 callbacks=callbacks)
+    
+    best_model = tuner.get_best_models()[0]
     
     score = model.evaluate(x_val, y_val, verbose=0)
     print('Validation loss    :', score[0])
@@ -141,4 +125,4 @@ if __name__ == '__main__':
         os.path.join(model_dir, 'model/1'),
         inputs={'inputs': model.input},
         outputs={t.name: t for t in model.outputs})
-    
+    mlflow.end_run()
